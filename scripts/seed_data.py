@@ -156,8 +156,8 @@ CARS = [
         "model": "Brezza",
         "type":  "Compact SUV",
         "price_range_inr": {
-            "min_ex_showroom": 975000,
-            "max_ex_showroom": 1280000,
+            "min_ex_showroom": 826000,
+            "max_ex_showroom": 1301000,
         },
         "engine": {
             "options": [
@@ -247,8 +247,8 @@ CARS = [
     "model": "Ertiga",
     "type":  "MUV",
     "price_range_inr": {
-        "min_ex_showroom": 864000,
-        "max_ex_showroom": 1308000,
+        "min_ex_showroom": 880000,
+        "max_ex_showroom": 1294000,
     },
     "engine": {
         "options": [
@@ -339,8 +339,8 @@ CARS = [
     "model": "Grand Vitara",
     "type":  "SUV",
     "price_range_inr": {
-        "min_ex_showroom": 1070000,
-        "max_ex_showroom": 1990000,
+        "min_ex_showroom": 1077000,
+        "max_ex_showroom": 1992000,
     },
     "engine": {
         "options": [
@@ -440,8 +440,8 @@ CARS = [
   "model": "Ciaz",
   "type": "Sedan",
   "price_range_inr": {
-    "min_ex_showroom": 930000,
-    "max_ex_showroom": 1210000
+    "min_ex_showroom": 909000,
+    "max_ex_showroom": 1188000
   },
   "engine": {
     "options": [
@@ -488,8 +488,8 @@ CARS = [
   "model": "Alto K10",
   "type": "Hatchback",
   "price_range_inr": {
-    "min_ex_showroom": 399000,
-    "max_ex_showroom": 590000
+    "min_ex_showroom": 370000,
+    "max_ex_showroom": 545000
   },
   "engine": {
     "options": [
@@ -810,7 +810,7 @@ CARS = [
         "review_count": 3800,
     },
 
-    # ── Maruti Suzuki Invicto (CarDekho: maruti/invicto — strong hybrid MPV) ────
+    # ── Maruti Suzuki Invicto ────
     {
         "make":  "Maruti Suzuki",
         "model": "Invicto",
@@ -853,7 +853,7 @@ CARS = [
         "review_count": 420,
     },
 
-    # ── Maruti Suzuki Victoris (CarDekho: maruti/victoris/variants.htm) ─────────
+    # ── Maruti Suzuki Victoris  ─────────
     {
         "make":  "Maruti Suzuki",
         "model": "Victoris",
@@ -866,7 +866,7 @@ CARS = [
             "options": [
                 {"displacement_cc": 1462, "cylinders": 4, "fuel_type": "Petrol"},
                 {"displacement_cc": 1462, "cylinders": 4, "fuel_type": "CNG"},
-                {"displacement_cc": 1490, "cylinders": 4, "fuel_type": "Hybrid"},
+                {"displacement_cc": 1490, "cylinders": 3, "fuel_type": "Hybrid"},
             ],
             "transmissions": ["Manual", "Automatic"],
         },
@@ -876,7 +876,7 @@ CARS = [
             "width_mm":            1795,
             "height_mm":           1655,
             "wheelbase_mm":        2600,
-            "ground_clearance_mm": 200,
+            "ground_clearance_mm": 210,
             "boot_space_litres":   373,
             "seating_capacity":    5,
             "doors":               5,
@@ -898,7 +898,7 @@ CARS = [
         "review_count": 84,
     },
 
-    # Maruti Suzuki e Vitara (EV) — battery sizes, ARAI range & power from launch / press (India)
+    # Maruti Suzuki e Vitara (EV)
     {
         "make":  "Maruti Suzuki",
         "model": "e Vitara",
@@ -1083,7 +1083,7 @@ CARS = [
             "length_mm":           4395,
             "width_mm":            1735,
             "height_mm":           1690,
-            "wheelbase_mm":        2740,
+            "wheelbase_mm":        2670,
             "ground_clearance_mm": 185,
             "boot_space_litres":   209,
             "seating_capacity":    7,
@@ -1103,7 +1103,7 @@ CARS = [
         "review_count": 57,
     },
 
-    # ── Maruti Suzuki Wagon R Tour (CarDekho: maruti/wagon-r-tour) — fleet hatch
+    # ── Maruti Suzuki Wagon R Tour 
     {
         "make":  "Maruti Suzuki",
         "model": "Wagon R Tour",
@@ -1119,7 +1119,7 @@ CARS = [
             ],
             "transmissions": ["Manual"],
         },
-        "fuel_tank": {"petrol_litres": 32},
+        "fuel_tank": {"petrol_litres": 32,"cng_kg": 5},
         "dimensions": {
             "length_mm":           3655,
             "width_mm":            1620,
@@ -1923,7 +1923,7 @@ VARIANTS = [
     "fuel": "Petrol",
     "transmission": "Manual",
     "price_ex_showroom_inr": 1152000,
-    "price_on_road_inr": 1358000,
+    "price_on_road_inr": 1447000,
     "mileage": 20.97,
     "mileage_unit": "kmpl",
     "power_bhp": 101.64,

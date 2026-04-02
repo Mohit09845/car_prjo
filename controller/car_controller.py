@@ -1,175 +1,84 @@
 import re
-
+from collections import defaultdict
+from bson import ObjectId
 from database.connection import car_collection, variant_collection
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  COLOR  NORMALIZER
-#  "Pearl Arctic White With Bluish Black Roof" → "White + Black"
-#  "Sizzling Red"                              → "Red"
-#  "Dual Tone Blue + Black"                    → "Blue + Black"
-# ═══════════════════════════════════════════════════════════════════════════════
-
-_COLOR_KEYWORDS = {
-    # Whites
-    "white":  "White",
-    "arctic": "White",
-    "pearl":  "White",
-
-    # Reds
-    "red":      "Red",
-    "sizzling": "Red",
-    "opulent":  "Red",
-    "gallant":  "Red",
-
-    # Blues
-    "blue":     "Blue",
-    "nexa":     "Blue",
-    "poolside": "Blue",
-    "luster":   "Blue",
-
-    # Blacks
-    "black": "Black",
-
-    # Greys
-    "grey":    "Grey",
-    "gray":    "Grey",
-    "magma":   "Grey",
-    "grandeur":"Grey",
-
-    # Silvers
-    "silver": "Silver",
-    "silky":  "Silver",
-    "splendid":"Silver",
-
-    # Browns
-    "brown":   "Brown",
-    "nutmeg":  "Brown",
-    "bronze":  "Brown",
-    "copper":  "Brown",
-
-    # Oranges
-    "orange": "Orange",
-    "novel":  "Orange",
-
-    # Greens
-    "green":  "Green",
-    "olive":  "Green",
-    "khaki":  "Khaki",
-    "brave":  "Khaki",
-
-    # Beiges
-    "beige": "Beige",
-    "luxe":  "Beige",
-    "cream": "Beige",
-
-    # Yellows
-    "yellow": "Yellow",
-    "golden": "Yellow",
-}
-
-
-def _extract_color(text: str) -> str | None:
-    """Return the first matching human color from a text fragment."""
-    t = text.lower()
-    for kw, label in _COLOR_KEYWORDS.items():
-        if kw in t:
-            return label
-    return None
-
-
-def _normalize_color(raw: str) -> str:
-    """Convert any raw color string to a clean, human-readable label."""
-    lower = raw.lower()
-
-    is_dual = "with" in lower or "dual tone" in lower or "+" in lower
-
-    if is_dual:
-        # Split on "with" or "+"
-        parts = lower.replace("dual tone", "").replace("+", " with ").split(" with ")
-        colors = []
-        for part in parts:
-            c = _extract_color(part)
-            if c and c not in colors:
-                colors.append(c)
-        return " + ".join(colors) if colors else raw
-
-    return _extract_color(raw) or raw          # fallback to raw if no match
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  SHARED  HELPERS
+#  HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
-
-def _fmt_car(car: dict) -> dict:
-    """Serialize a car document for API response."""
-    car["_id"] = str(car["_id"])
-    if "colours" in car:
-        # normalize + deduplicate while preserving order
-        seen, clean = set(), []
-        for raw in car["colours"]:
-            label = _normalize_color(raw)
-            if label not in seen:
-                seen.add(label)
-                clean.append(label)
-        car["colours"] = clean
-    return car
-
-
-def _fmt_variant(v: dict) -> dict:
-    """Serialize a variant document for API response."""
-    v["_id"]    = str(v["_id"])
-    v["car_id"] = str(v["car_id"])
-    return v
-
 
 def _find_car(model: str):
-    """Case-insensitive car lookup by model name."""
     return car_collection.find_one(
         {"model": {"$regex": f"^{re.escape(model)}$", "$options": "i"}}
     )
 
 
-def _all_equal(values: list) -> bool:
-    if not values:
-        return True
-    first = values[0]
-    return all(v == first for v in values)
+def normalize(value):
+    if isinstance(value, list):
+        return sorted(value)
+    if isinstance(value, dict):
+        return {k: normalize(v) for k, v in sorted(value.items())}
+    return value
 
 
-def partition_comparison(rows: list[dict], label_key: str) -> dict:
-    """
-    Split compared rows into values shared by all (common) vs per-label (different).
-    label_key is the row identifier: \"model\" for cars, \"name\" for variants.
-    """
-    if not rows:
-        return {"common": {}, "different": {}}
+def extract_engine_info(car: dict):
+    eng = car.get("engine", {})
 
-    keys: set[str] = set()
-    for r in rows:
-        keys.update(r.keys())
+    fuel_types = []
+    displacements = []
 
-    common: dict = {}
-    different: dict = {}
-    for key in keys:
-        vals = [r.get(key) for r in rows]
-        if _all_equal(vals):
-            common[key] = vals[0]
-        else:
-            different[key] = {r[label_key]: r.get(key) for r in rows}
+    if "options" in eng:
+        for opt in eng["options"]:
+            if opt["fuel_type"] not in fuel_types:
+                fuel_types.append(opt["fuel_type"])
+            if opt["displacement_cc"] not in displacements:
+                displacements.append(opt["displacement_cc"])
 
-    return {"common": common, "different": different}
+    fuel_types = sorted(fuel_types)
+    transmissions = sorted(set(eng.get("transmissions", [])))
+
+    displacement = (
+        displacements[0] if len(displacements) == 1 else sorted(displacements)
+    )
+
+    return {
+        "displacement_cc": displacement,
+        "fuel_types": fuel_types,
+        "transmissions": transmissions
+    }
+
+
+def extract_fuel_tank(car: dict):
+    ft = car.get("fuel_tank", {})
+
+    result = {
+        "petrol": ft.get("petrol_litres"),
+        "diesel": ft.get("diesel_litres"),
+        "cng": ft.get("cng_kg"),
+    }
+
+    return {k: v for k, v in result.items() if v is not None}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  0.  GET ALL CARS  (existing endpoint, cleaned up)
+#  1. GET ALL CARS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_all_cars() -> list[dict]:
-    return [_fmt_car(car) for car in car_collection.find({}, {"_id": 1, "make": 1, "model": 1, "type": 1, "price_range_inr": 1})]
+    return list(car_collection.find(
+        {},
+        {
+            "_id": 0,
+            "model": 1,
+            "type": 1,
+            "price_range_inr": 1
+        }
+    ))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  1.  GET CAR BY MODEL  — full info with normalized colours
+#  2. GET CAR BY MODEL
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_car_by_model(model: str) -> dict | None:
@@ -177,124 +86,130 @@ def get_car_by_model(model: str) -> dict | None:
     if not car:
         return None
 
-    variant_names = variant_collection.find(
+    variants = variant_collection.find(
         {"car_id": car["_id"]},
-        {"name": 1, "_id": 0}          
-    ).sort("price_ex_showroom_inr", 1) 
+        {"name": 1, "_id": 0}
+    ).sort("price_ex_showroom_inr", 1)
 
-    car = _fmt_car(car)
-    car["variants"] = [v["name"] for v in variant_names]
-    return car
+    return {
+        "model": car["model"],
+        "type": car["type"],
+        "price_range_inr": car["price_range_inr"],
+        "engine": extract_engine_info(car),          # ✅ FIXED
+        "fuel_tank": extract_fuel_tank(car),         # ✅ FIXED
+        "variants": [v["name"] for v in variants]
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  2.  PRICE RANGE  — variants between min and max (ex-showroom, rupees)
+#  3. PRICE RANGE FILTER
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_variants_by_price_range(min_price: int, max_price: int) -> list[dict]:
-    """
-    Returns all variants whose ex-showroom price falls within the given range.
-    Results are sorted cheapest → most expensive.
-    """
     cursor = variant_collection.find(
-        {"price_ex_showroom_inr": {"$gte": min_price, "$lte": max_price}},
-        {"car_id": 1, "name": 1, "fuel": 1, "transmission": 1,
-         "price_ex_showroom_inr": 1, "price_on_road_inr": 1,
-         "mileage": 1, "mileage_unit": 1},
+        {
+            "price_ex_showroom_inr": {
+                "$gte": min_price,
+                "$lte": max_price
+            }
+        },
+        {
+            "car_id": 1,
+            "name": 1,
+            "fuel": 1,
+            "transmission": 1,
+            "price_ex_showroom_inr": 1,
+            "mileage": 1,
+            "mileage_unit": 1,
+        },
     ).sort("price_ex_showroom_inr", 1)
 
-    return [_fmt_variant(v) for v in cursor]
+    variants = list(cursor)
+    if not variants:
+        return []
+
+    grouped = defaultdict(list)
+    for v in variants:
+        grouped[str(v["car_id"])].append(v)
+
+    car_ids = [ObjectId(cid) for cid in grouped.keys()]
+    cars = car_collection.find({"_id": {"$in": car_ids}}, {"model": 1})
+
+    car_map = {str(c["_id"]): c["model"] for c in cars}
+
+    result = []
+    for car_id, vars in grouped.items():
+        result.append({
+            "model": car_map.get(car_id, "Unknown"),
+            "variants": [
+                {
+                    "name": v["name"],
+                    "fuel": v["fuel"],
+                    "transmission": v["transmission"],
+                    "price": v["price_ex_showroom_inr"],
+                    "mileage": f"{v['mileage']} {v['mileage_unit']}"
+                }
+                for v in vars
+            ]
+        })
+
+    result.sort(key=lambda x: x["model"])
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  3a. COMPARE MODELS  — side-by-side car comparison
+#  4. COMPARE MODELS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def compare_models(models: list[str]) -> dict | None:
-    """
-    Compare car models: builds one row per found model, then splits fields into
-    *common* (same value for every row) and *different* (per-model values).
-    """
-    rows: list[dict] = []
+    rows = []
 
     for model in models:
         car = _find_car(model)
         if not car:
             continue
 
-        eng = car.get("engine")
-        if car.get("electric"):
-            el = car["electric"]
-            engine_cmp = {
-                "electric": {
-                    "battery_capacity_kwh": el.get("battery_capacity_kwh"),
-                    "range_km_arai_peak": el.get("range_km_arai_peak"),
-                    "peak_power_kw": el.get("peak_power_kw"),
-                },
-            }
-        elif eng and "options" in eng:
-            opts = eng["options"]
-            fuel_types: list[str] = []
-            displacements: list[int] = []
-            for o in opts:
-                if o["fuel_type"] not in fuel_types:
-                    fuel_types.append(o["fuel_type"])
-                if o["displacement_cc"] not in displacements:
-                    displacements.append(o["displacement_cc"])
-            disp_out: int | list[int] = (
-                displacements[0] if len(displacements) == 1 else displacements
-            )
-            engine_cmp = {
-                "displacement_cc": disp_out,
-                "fuel_types": fuel_types,
-                "transmissions": eng["transmissions"],
-            }
-        elif eng:
-            engine_cmp = {
-                "displacement_cc": eng["displacement_cc"],
-                "fuel_types": eng["fuel_types"],
-                "transmissions": eng["transmissions"],
-            }
-        else:
-            engine_cmp = {}
-
         rows.append({
-            "model":             car["model"],
-            "type":              car["type"],
-            "price_range_inr":   car["price_range_inr"],
-            "engine":            engine_cmp,
+            "model": car["model"],
+            "type": car["type"],
+            "price_range_inr": car["price_range_inr"],
+            "engine": extract_engine_info(car),      # ✅ FIXED
+            "fuel_tank": extract_fuel_tank(car),     # ✅ FIXED
             "boot_space_litres": car["dimensions"]["boot_space_litres"],
-            "wheelbase_mm":      car["dimensions"]["wheelbase_mm"],
             "safety": {
-                "airbags":    car["safety"]["airbags"],
-                "ncap_stars": car["safety"]["ncap_stars"],
+                "airbags": car["safety"]["airbags"],
+                "ncap": car["safety"]["ncap_stars"],
             },
-            "colours":      _normalize_colours(car.get("colours", [])),
-            "user_rating":  car["user_rating"],
-            "review_count": car["review_count"],
+            "reviews": {
+                "rating": round(car.get("user_rating", 0), 1),
+                "count": car.get("review_count", 0)
+            }
         })
 
     if not rows:
         return None
 
-    part = partition_comparison(rows, "model")
-    return {"compared": len(rows), **part}
- 
- 
-def _normalize_colours(colours: list[str]) -> list[str]:
-    """Deduplicated, human-readable colour list."""
-    seen, clean = set(), []
-    for raw in colours:
-        label = _normalize_color(raw)
-        if label not in seen:
-            seen.add(label)
-            clean.append(label)
-    return clean
- 
+    keys = rows[0].keys()
+    common = {}
+    different = {}
+
+    for key in keys:
+        values = [normalize(r[key]) for r in rows]
+
+        if all(v == values[0] for v in values):
+            common[key] = values[0]
+        else:
+            different[key] = {r["model"]: r[key] for r in rows}
+
+    return {
+        "compared": len(rows),
+        "common": common,
+        "different": different
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  3b. COMPARE VARIANTS  — side-by-side variant comparison within a model
+#  5. COMPARE VARIANTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def compare_variants(car_model: str, variant_names: list[str]) -> dict | None:
@@ -302,38 +217,50 @@ def compare_variants(car_model: str, variant_names: list[str]) -> dict | None:
     if not car:
         return None
 
-    rows: list[dict] = []
+    rows = []
     for name in variant_names:
         v = variant_collection.find_one({
             "car_id": car["_id"],
             "name": {"$regex": f"^{re.escape(name)}$", "$options": "i"},
         })
+
         if v:
             rows.append({
-                "name":                  v["name"],
-                "fuel":                  v["fuel"],
-                "transmission":          v["transmission"],
-                "price_ex_showroom_inr": v["price_ex_showroom_inr"],
-                "price_on_road_inr":     v["price_on_road_inr"],
-                "mileage":               f"{v['mileage']} {v['mileage_unit']}",
-                "key_features":          v["key_features"],
+                "name": v["name"],
+                "fuel": v["fuel"],
+                "transmission": v["transmission"],
+                "price": v["price_ex_showroom_inr"],
+                "mileage": f"{v['mileage']} {v['mileage_unit']}",
+                "key_features": sorted(v.get("key_features", []))
             })
 
     if not rows:
         return None
 
-    part = partition_comparison(rows, "name")
-    return {"compared": len(rows), **part}
+    keys = rows[0].keys()
+    common = {}
+    different = {}
+
+    for key in keys:
+        values = [normalize(r[key]) for r in rows]
+
+        if all(v == values[0] for v in values):
+            common[key] = values[0]
+        else:
+            different[key] = {r["name"]: r[key] for r in rows}
+
+    return {
+        "compared": len(rows),
+        "common": common,
+        "different": different
+    }
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  4.  GET SPECIFIC VARIANT
+#  6. GET SINGLE VARIANT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_variant(car_model: str, variant_name: str) -> dict | None:
-    """
-    Returns complete info for one variant of a car.
-    e.g. get_variant("Swift", "ZXi Plus AMT")
-    """
     car = _find_car(car_model)
     if not car:
         return None
@@ -342,4 +269,15 @@ def get_variant(car_model: str, variant_name: str) -> dict | None:
         "car_id": car["_id"],
         "name": {"$regex": f"^{re.escape(variant_name)}$", "$options": "i"},
     })
-    return _fmt_variant(v) if v else None
+
+    if not v:
+        return None
+
+    return {
+        "name": v["name"],
+        "fuel": v["fuel"],
+        "transmission": v["transmission"],
+        "price": v["price_ex_showroom_inr"],
+        "mileage": f"{v['mileage']} {v['mileage_unit']}",
+        "key_features": v.get("key_features", [])
+    }
