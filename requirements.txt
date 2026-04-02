@@ -1,0 +1,13 @@
+# Car API — install after creating a virtual environment:
+#   python -m venv .venv
+#   .venv\Scripts\activate          (Windows)
+#   source .venv/bin/activate       (Linux / macOS)
+#   pip install -r requirements.txt
+#
+# Start FastAPI:
+#   uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.30.0,<1.0.0
+pymongo>=4.6.0,<5.0.0
+python-dotenv>=1.0.0,<2.0.0

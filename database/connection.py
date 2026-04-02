@@ -59,7 +59,7 @@ def ensure_indexes():
         name="idx_variants_price",
     )
 
-    print("✅ All indexes ensured.")
+    print("OK: All indexes ensured.")
 
 
 # Create indexes once on first import (idempotent — safe to run repeatedly)

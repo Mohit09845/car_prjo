@@ -1,3 +1,5 @@
+import re
+
 from database.connection import car_collection, variant_collection
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -123,8 +125,39 @@ def _fmt_variant(v: dict) -> dict:
 def _find_car(model: str):
     """Case-insensitive car lookup by model name."""
     return car_collection.find_one(
-        {"model": {"$regex": f"^{model}$", "$options": "i"}}
+        {"model": {"$regex": f"^{re.escape(model)}$", "$options": "i"}}
     )
+
+
+def _all_equal(values: list) -> bool:
+    if not values:
+        return True
+    first = values[0]
+    return all(v == first for v in values)
+
+
+def partition_comparison(rows: list[dict], label_key: str) -> dict:
+    """
+    Split compared rows into values shared by all (common) vs per-label (different).
+    label_key is the row identifier: \"model\" for cars, \"name\" for variants.
+    """
+    if not rows:
+        return {"common": {}, "different": {}}
+
+    keys: set[str] = set()
+    for r in rows:
+        keys.update(r.keys())
+
+    common: dict = {}
+    different: dict = {}
+    for key in keys:
+        vals = [r.get(key) for r in rows]
+        if _all_equal(vals):
+            common[key] = vals[0]
+        else:
+            different[key] = {r[label_key]: r.get(key) for r in rows}
+
+    return {"common": common, "different": different}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -177,29 +210,59 @@ def get_variants_by_price_range(min_price: int, max_price: int) -> list[dict]:
 #  3a. COMPARE MODELS  — side-by-side car comparison
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def compare_models(models: list[str]) -> list[dict]:
+def compare_models(models: list[str]) -> dict | None:
     """
-    Side-by-side comparison of car models.
-    Returns only fields that meaningfully differ and help a buyer decide.
-    Strips: make (same brand), _id, abs/ebd/esc (all true), isofix,
-            exact body dimensions, doors, seating (always 5).
+    Compare car models: builds one row per found model, then splits fields into
+    *common* (same value for every row) and *different* (per-model values).
     """
-    result = []
- 
+    rows: list[dict] = []
+
     for model in models:
         car = _find_car(model)
         if not car:
             continue
- 
-        result.append({
-            "model":            car["model"],
-            "type":             car["type"],
-            "price_range_inr":  car["price_range_inr"],
-            "engine": {
-                "displacement_cc": car["engine"]["displacement_cc"],
-                "fuel_types":      car["engine"]["fuel_types"],
-                "transmissions":   car["engine"]["transmissions"],
-            },
+
+        eng = car.get("engine")
+        if car.get("electric"):
+            el = car["electric"]
+            engine_cmp = {
+                "electric": {
+                    "battery_capacity_kwh": el.get("battery_capacity_kwh"),
+                    "range_km_arai_peak": el.get("range_km_arai_peak"),
+                    "peak_power_kw": el.get("peak_power_kw"),
+                },
+            }
+        elif eng and "options" in eng:
+            opts = eng["options"]
+            fuel_types: list[str] = []
+            displacements: list[int] = []
+            for o in opts:
+                if o["fuel_type"] not in fuel_types:
+                    fuel_types.append(o["fuel_type"])
+                if o["displacement_cc"] not in displacements:
+                    displacements.append(o["displacement_cc"])
+            disp_out: int | list[int] = (
+                displacements[0] if len(displacements) == 1 else displacements
+            )
+            engine_cmp = {
+                "displacement_cc": disp_out,
+                "fuel_types": fuel_types,
+                "transmissions": eng["transmissions"],
+            }
+        elif eng:
+            engine_cmp = {
+                "displacement_cc": eng["displacement_cc"],
+                "fuel_types": eng["fuel_types"],
+                "transmissions": eng["transmissions"],
+            }
+        else:
+            engine_cmp = {}
+
+        rows.append({
+            "model":             car["model"],
+            "type":              car["type"],
+            "price_range_inr":   car["price_range_inr"],
+            "engine":            engine_cmp,
             "boot_space_litres": car["dimensions"]["boot_space_litres"],
             "wheelbase_mm":      car["dimensions"]["wheelbase_mm"],
             "safety": {
@@ -210,8 +273,12 @@ def compare_models(models: list[str]) -> list[dict]:
             "user_rating":  car["user_rating"],
             "review_count": car["review_count"],
         })
- 
-    return result
+
+    if not rows:
+        return None
+
+    part = partition_comparison(rows, "model")
+    return {"compared": len(rows), **part}
  
  
 def _normalize_colours(colours: list[str]) -> list[str]:
@@ -230,19 +297,19 @@ def _normalize_colours(colours: list[str]) -> list[str]:
 #  3b. COMPARE VARIANTS  — side-by-side variant comparison within a model
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def compare_variants(car_model: str, variant_names: list[str]) -> list[dict]:
+def compare_variants(car_model: str, variant_names: list[str]) -> dict | None:
     car = _find_car(car_model)
     if not car:
-        return []
+        return None
 
-    result = []
+    rows: list[dict] = []
     for name in variant_names:
         v = variant_collection.find_one({
             "car_id": car["_id"],
-            "name": {"$regex": f"^{name}$", "$options": "i"},
+            "name": {"$regex": f"^{re.escape(name)}$", "$options": "i"},
         })
         if v:
-            result.append({
+            rows.append({
                 "name":                  v["name"],
                 "fuel":                  v["fuel"],
                 "transmission":          v["transmission"],
@@ -252,7 +319,11 @@ def compare_variants(car_model: str, variant_names: list[str]) -> list[dict]:
                 "key_features":          v["key_features"],
             })
 
-    return result
+    if not rows:
+        return None
+
+    part = partition_comparison(rows, "name")
+    return {"compared": len(rows), **part}
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  4.  GET SPECIFIC VARIANT
@@ -269,6 +340,6 @@ def get_variant(car_model: str, variant_name: str) -> dict | None:
 
     v = variant_collection.find_one({
         "car_id": car["_id"],
-        "name": {"$regex": f"^{variant_name}$", "$options": "i"},
+        "name": {"$regex": f"^{re.escape(variant_name)}$", "$options": "i"},
     })
     return _fmt_variant(v) if v else None

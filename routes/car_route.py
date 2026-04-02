@@ -22,24 +22,11 @@ def list_cars():
     return {"count": len(cars), "cars": cars}
 
 
-# ── GET /cars/{model} ─────────────────────────────────────────────────────────
-@router.get("/{model}")
-def car_by_model(model: str):
-    """
-    Full car info for a model with human-readable colours.
-    e.g. /cars/Swift
-    """
-    car = get_car_by_model(model)
-    if not car:
-        raise HTTPException(status_code=404, detail=f"Car model '{model}' not found.")
-    return car
-
-
-# ── GET /cars/price-range?min=500000&max=800000 ───────────────────────────────
+# ── GET /cars/filter/price-range (before /{model}) ────────────────────────────
 @router.get("/filter/price-range")
 def cars_by_price(
-    min: int = Query(..., ge=0,          description="Min ex-showroom price in ₹"),
-    max: int = Query(..., ge=0,          description="Max ex-showroom price in ₹"),
+    min: int = Query(..., ge=0, description="Min ex-showroom price in ₹"),
+    max: int = Query(..., ge=0, description="Max ex-showroom price in ₹"),
 ):
     """
     All variants whose ex-showroom price falls within [min, max].
@@ -58,33 +45,46 @@ def cars_by_price(
 @router.post("/compare/models")
 def compare_car_models(body: CompareModelsRequest):
     """
-    Side-by-side comparison of two or more car models.
-    Body: { "models": ["Swift", "Dzire"] }
+    Compare car models. Response includes `common`, `different`, and `compared`.
+    Body: { "models": ["Swift", "Baleno"] }
     """
     if len(body.models) < 2:
         raise HTTPException(status_code=400, detail="Provide at least 2 models to compare.")
     result = compare_models(body.models)
     if not result:
         raise HTTPException(status_code=404, detail="None of the requested models were found.")
-    return {"compared": len(result), "cars": result}
+    if result["compared"] < 2:
+        raise HTTPException(
+            status_code=404,
+            detail="Fewer than 2 models exist in the database for this comparison.",
+        )
+    return result
 
 
 # ── POST /cars/compare/variants ───────────────────────────────────────────────
 @router.post("/compare/variants")
 def compare_car_variants(body: CompareVariantsRequest):
     """
-    Side-by-side comparison of specific variants within a car model.
+    Compare variants within one model. Response includes `common`, `different`, and `compared`.
     Body: { "car_model": "Swift", "variants": ["LXi", "VXi", "ZXi Plus AMT"] }
     """
     if len(body.variants) < 2:
         raise HTTPException(status_code=400, detail="Provide at least 2 variants to compare.")
     result = compare_variants(body.car_model, body.variants)
     if not result:
-        raise HTTPException(status_code=404, detail="No matching variants found.")
-    return {"car_model": body.car_model, "compared": len(result), "variants": result}
+        raise HTTPException(
+            status_code=404,
+            detail="Car model not found or no matching variants.",
+        )
+    if result["compared"] < 2:
+        raise HTTPException(
+            status_code=404,
+            detail="Fewer than 2 variants were found for this comparison.",
+        )
+    return {"car_model": body.car_model, **result}
 
 
-# ── GET /cars/{model}/variants/{variant_name} ─────────────────────────────────
+# ── GET /cars/{model}/variants/{variant_name} (before /{model}) ─────────────
 @router.get("/{model}/variants/{variant_name}")
 def variant_detail(model: str, variant_name: str):
     """
@@ -98,3 +98,16 @@ def variant_detail(model: str, variant_name: str):
             detail=f"Variant '{variant_name}' not found for model '{model}'.",
         )
     return v
+
+
+# ── GET /cars/{model} ─────────────────────────────────────────────────────────
+@router.get("/{model}")
+def car_by_model(model: str):
+    """
+    Full car info for a model with human-readable colours.
+    e.g. /cars/Swift
+    """
+    car = get_car_by_model(model)
+    if not car:
+        raise HTTPException(status_code=404, detail=f"Car model '{model}' not found.")
+    return car

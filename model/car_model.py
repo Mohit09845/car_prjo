@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import List, Optional, Literal
+from pydantic import BaseModel, model_validator
+from typing import List, Optional
 
 
 class PriceRange(BaseModel):
@@ -19,9 +19,19 @@ class Engine(BaseModel):
 
 
 class FuelTank(BaseModel):
+    """ICE fuel tanks. Omit `cng_kg` unless you have a verified official figure."""
+
     petrol_litres: Optional[int] = None
     diesel_litres: Optional[int] = None
     cng_kg: Optional[float] = None
+
+
+class ElectricSpecs(BaseModel):
+    """Battery EV — use instead of `engine` / `fuel_tank` for pure electrics."""
+
+    battery_capacity_kwh: List[float]
+    range_km_arai_peak: Optional[int] = None
+    peak_power_kw: Optional[float] = None
 
 
 class Dimensions(BaseModel):
@@ -50,24 +60,20 @@ class Car(BaseModel):
     model: str
     type: str
     price_range_inr: PriceRange
-    engine: Engine
-    fuel_tank: FuelTank
     dimensions: Dimensions
     safety: Safety
     colours: List[str]
     user_rating: float
     review_count: int
 
+    engine: Optional[Engine] = None
+    electric: Optional[ElectricSpecs] = None
+    fuel_tank: Optional[FuelTank] = None
 
-class Variant(BaseModel):
-    car_id: str
-    name: str
-    fuel: Literal["Petrol", "CNG", "Diesel", "Hybrid"]
-    transmission: Literal["Manual", "AMT", "Automatic", "CVT"]
-    price_ex_showroom_inr: int
-    price_on_road_inr: int
-    mileage: float
-    mileage_unit: str
-    power_bhp: float
-    torque_nm: float
-    key_features: List[str]
+    @model_validator(mode="after")
+    def ice_or_ev(self):
+        if self.engine is None and self.electric is None:
+            raise ValueError("Car must include either `engine` (ICE) or `electric` (EV).")
+        if self.engine is not None and self.electric is not None:
+            raise ValueError("Use either `engine` or `electric`, not both.")
+        return self
