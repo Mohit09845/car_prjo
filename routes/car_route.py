@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
+
 from controller.car_controller import (
     get_all_cars,
     get_car_by_model,
@@ -6,6 +7,7 @@ from controller.car_controller import (
     compare_models,
     compare_variants,
     get_variant,
+    get_car_complete_data
 )
 from model.request_model import CompareModelsRequest, CompareVariantsRequest
 
@@ -22,17 +24,23 @@ def list_cars():
     return {"count": len(cars), "cars": cars}
 
 
-# ── GET /cars/filter/price-range (before /{model}) ────────────────────────────
+# ── GET /cars/variants/all ────────────────────────────────────────────────────
+# ✅ MOVED UP — must be before /{model} to avoid "variants" being treated as model name
+@router.get("/variants/all")
+def car_complete_data():
+    """Returns all variants across all models with mileage and specs."""
+    data = get_car_complete_data()
+    if not data:
+        raise HTTPException(status_code=404, detail="No variants found.")
+    return {"count": len(data), "variants": data}
+
+
+# ── GET /cars/filter/price-range ──────────────────────────────────────────────
 @router.get("/filter/price-range")
 def cars_by_price(
     min: int = Query(..., ge=0, description="Min ex-showroom price in ₹"),
     max: int = Query(..., ge=0, description="Max ex-showroom price in ₹"),
 ):
-    """
-    All variants whose ex-showroom price falls within [min, max].
-    Sorted cheapest → most expensive.
-    e.g. /cars/filter/price-range?min=500000&max=800000
-    """
     if min > max:
         raise HTTPException(status_code=400, detail="'min' must be ≤ 'max'.")
     variants = get_variants_by_price_range(min, max)
@@ -44,10 +52,6 @@ def cars_by_price(
 # ── POST /cars/compare/models ─────────────────────────────────────────────────
 @router.post("/compare/models")
 def compare_car_models(body: CompareModelsRequest):
-    """
-    Compare car models. Response includes `common`, `different`, and `compared`.
-    Body: { "models": ["Swift", "Baleno"] }
-    """
     if len(body.models) < 2:
         raise HTTPException(status_code=400, detail="Provide at least 2 models to compare.")
     result = compare_models(body.models)
@@ -64,10 +68,6 @@ def compare_car_models(body: CompareModelsRequest):
 # ── POST /cars/compare/variants ───────────────────────────────────────────────
 @router.post("/compare/variants")
 def compare_car_variants(body: CompareVariantsRequest):
-    """
-    Compare variants within one model. Response includes `common`, `different`, and `compared`.
-    Body: { "car_model": "Swift", "variants": ["LXi", "VXi", "ZXi Plus AMT"] }
-    """
     if len(body.variants) < 2:
         raise HTTPException(status_code=400, detail="Provide at least 2 variants to compare.")
     result = compare_variants(body.car_model, body.variants)
@@ -84,13 +84,9 @@ def compare_car_variants(body: CompareVariantsRequest):
     return {"car_model": body.car_model, **result}
 
 
-# ── GET /cars/{model}/variants/{variant_name} (before /{model}) ─────────────
+# ── GET /cars/{model}/variants/{variant_name} ─────────────────────────────────
 @router.get("/{model}/variants/{variant_name}")
 def variant_detail(model: str, variant_name: str):
-    """
-    Full spec for one specific variant.
-    e.g. /cars/Swift/variants/ZXi Plus AMT
-    """
     v = get_variant(model, variant_name)
     if not v:
         raise HTTPException(
@@ -101,12 +97,9 @@ def variant_detail(model: str, variant_name: str):
 
 
 # ── GET /cars/{model} ─────────────────────────────────────────────────────────
+# ✅ MUST always be last — catches any /{model} pattern
 @router.get("/{model}")
 def car_by_model(model: str):
-    """
-    Full car info for a model with human-readable colours.
-    e.g. /cars/Swift
-    """
     car = get_car_by_model(model)
     if not car:
         raise HTTPException(status_code=404, detail=f"Car model '{model}' not found.")

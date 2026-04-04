@@ -1,34 +1,45 @@
-from pydantic import BaseModel, model_validator
-from typing import List, Optional
+from pydantic import BaseModel, model_validator, Field
+from typing import List, Optional, Literal
+
+CarTransmission = Literal["Manual", "AMT", "AT", "Automatic", "e-CVT", "CVT"]
+FuelType = Literal["Petrol", "CNG", "Diesel", "Hybrid", "Electric"]
 
 
 class PriceRange(BaseModel):
     min_ex_showroom: int
     max_ex_showroom: int
 
+    @model_validator(mode="after")
+    def check_range(self):
+        if self.min_ex_showroom > self.max_ex_showroom:
+            raise ValueError("min_ex_showroom must be <= max_ex_showroom")
+        return self
+
 
 class EngineOption(BaseModel):
     displacement_cc: int
     cylinders: int
-    fuel_type: str
+    fuel_type: FuelType
 
 
 class Engine(BaseModel):
     options: List[EngineOption]
-    transmissions: List[str]
+    transmissions: List[CarTransmission]
 
 
 class FuelTank(BaseModel):
-    """ICE fuel tanks. Omit `cng_kg` unless you have a verified official figure."""
+    petrol_litres: Optional[float] = None
+    diesel_litres: Optional[float] = None
+    cng_litres: Optional[float] = None
 
-    petrol_litres: Optional[int] = None
-    diesel_litres: Optional[int] = None
-    cng_kg: Optional[float] = None
+    @model_validator(mode="after")
+    def at_least_one_fuel(self):
+        if all(v is None for v in [self.petrol_litres, self.diesel_litres, self.cng_litres]):
+            raise ValueError("FuelTank must specify at least one fuel capacity.")
+        return self
 
 
 class ElectricSpecs(BaseModel):
-    """Battery EV — use instead of `engine` / `fuel_tank` for pure electrics."""
-
     battery_capacity_kwh: List[float]
     range_km_arai_peak: Optional[int] = None
     peak_power_kw: Optional[float] = None
@@ -47,9 +58,9 @@ class Dimensions(BaseModel):
 
 class Safety(BaseModel):
     airbags: int
-    abs: bool
-    ebd: bool
-    esc: bool
+    has_abs: bool = Field(alias="abs")
+    has_ebd: bool = Field(alias="ebd")
+    has_esc: bool = Field(alias="esc")
     hill_assist: bool
     isofix: bool
     ncap_stars: Optional[int] = None
@@ -58,12 +69,12 @@ class Safety(BaseModel):
 class Car(BaseModel):
     make: str
     model: str
-    type: str
+    car_type: str = Field(alias="type")
     price_range_inr: PriceRange
     dimensions: Dimensions
     safety: Safety
     colours: List[str]
-    user_rating: float
+    user_rating: float = Field(..., ge=0.0, le=5.0)
     review_count: int
 
     engine: Optional[Engine] = None

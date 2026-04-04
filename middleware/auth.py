@@ -11,7 +11,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
 
         # ── skip public routes ────────────────────────────────────────────────
-        if request.url.path in PUBLIC_ROUTES:
+        if any(request.url.path.startswith(route) for route in PUBLIC_ROUTES):
             return await call_next(request)
 
         # ── check header ──────────────────────────────────────────────────────
