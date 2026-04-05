@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from typing import List, Literal, Optional
 
 Fuel = Literal["Petrol", "CNG", "Diesel", "Hybrid", "Electric"]
-Transmission = Literal["Manual", "AMT", "Automatic", "CVT"]
+Transmission = Literal["Manual", "Automatic", "CVT"]
 MileageUnit = Literal["kmpl", "km/kg", "km/charge"]
 
 

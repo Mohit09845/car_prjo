@@ -1,7 +1,7 @@
 from pydantic import BaseModel, model_validator, Field
 from typing import List, Optional, Literal
 
-CarTransmission = Literal["Manual", "AMT", "AT", "Automatic", "e-CVT", "CVT"]
+CarTransmission = Literal["Manual", "Automatic", "CVT"]
 FuelType = Literal["Petrol", "CNG", "Diesel", "Hybrid", "Electric"]
 
 
