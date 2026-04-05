@@ -41,7 +41,8 @@ class IntentResponse(BaseModel):
         "price_range_inr",
         "variants",
         "features",
-        "mileage"
+        "mileage",
+        "transmission"   # ← ADDED
     ]]] = Field(None, description="Specific fields the user is asking about. Only populate when user asks for a specific attribute.")
 
 # Make this function ASYNC
@@ -58,7 +59,7 @@ Your job is to read user queries, normalize any phonetic mispronunciations of ca
   "variants": ["List of variants if comparing"],
   "min_price": Minimum price in raw INR (e.g. 5 lakh -> 500000),
   "max_price": Maximum price in raw INR (e.g. 10 lakh -> 1000000),
-  "fields": ["Specific fields user is asking about e.g. colors, engine, mileage, safety"]
+  "fields": ["Specific fields user is asking about e.g. colors, engine, mileage, safety, transmission"]
 }
 
 ---
@@ -85,19 +86,48 @@ Because users speak via voice, STT transcripts often contain phonetic misspellin
 * e Vitara: e vitara, ev vitara, electric vitara, ivitara, e bitara
 * Alto Tour H1: Alto Tuar H1, Alto Tuur H1, Alto Tour H1, Alto Ture H1, Alto Toor H1
 
+Transmission term normalization (map all of these to their clean form in your reasoning):
+* Automatic: automatik, aatamatic, ottometic, auto, aautomatic, automatic wali, auto wali
+* AMT: amt, a m t, auto manual, automated manual
+* CVT: cvt, c v t, continuously variable
+* Manual: manuwal, manyual, MT, hand gear, haath wala gear
+
 ---
 CRITICAL STEP 2: INTENT RULES
-- "get_all_cars"          -> User wants ONLY a simple list of car model names.
-- "get_car_complete_data" -> User asks about ANY attribute (mileage, price, power, specs) across ALL cars or ALL variants. (e.g., "all cars mileage", "sabse zyada mileage wali car"). STRICT RULE: If user asks about ANY attribute of ALL cars -> ALWAYS use "get_car_complete_data".
+- "get_all_cars"          -> User wants ONLY a simple list of car model names. No attributes.
+                             EXAMPLE: "show me all cars", "kaun kaun si cars hain"
+- "get_car_complete_data" -> User asks about ANY attribute (mileage, price, power, specs, transmission) across ALL cars or ALL variants.
+                             EXAMPLES: "all cars mileage", "saari cars ki mileage", "avg mileage of all cars", "sabse zyada mileage wali car",
+                             "most powerful variant", "cheapest variant overall", "all cars price list",
+                             "automatic cars dikhao", "kaun si cars automatic hain", "sabhi cars mein automatic kaun si hai",
+                             "which cars have AMT", "AMT wali cars", "CVT cars list"
+                             STRICT RULE: If user asks about ANY attribute of ALL cars -> ALWAYS use "get_car_complete_data", NEVER "get_all_cars".
 - "get_car"               -> User wants full info about one specific model.
-- "get_car_colors"        -> User asks specifically about colors of one model. Set fields: ["colours"]
+                             EXAMPLE: "tell me about Swift", "Baleno ki details do"
+- "get_car_colors"        -> User asks specifically about colors of one model.
+                             EXAMPLE: "Baleno ke colors kya hain", "what colors does Swift have"
+                             Set fields: ["colours"]
 - "get_car_specs"         -> User asks about specs of one model.
+                             EXAMPLE: "Swift ki engine specs", "Baleno ka boot space", "Swift mein automatic hai kya", "Baleno ka gear type"
+                             Set fields accordingly.
 - "get_variants"          -> User wants all variants of one specific model listed.
+                             EXAMPLE: "Swift ke saare variants", "show variants of Baleno"
 - "get_variant_detail"    -> User asks about one specific variant of a model.
+                             EXAMPLE: "Swift VXI ki details", "Baleno Alpha ka price"
 - "compare_models"        -> User wants to compare 2 or more car models.
+                             EXAMPLE: "Swift vs Baleno", "compare Breja and Phronx"
 - "compare_variants"      -> User wants to compare 2 or more variants of the same model.
-- "price_range"           -> User filters cars/variants by budget.
+                             EXAMPLE: "Swift LXI vs VXI vs ZXI"
+- "price_range"           -> User filters cars/variants by budget, optionally with transmission type.
+                             EXAMPLE: "5 lakh se 8 lakh mein kaun si car", "cars under 10 lakh",
+                             "automatic cars under 8 lakh", "AMT car 6 lakh mein"
 - "unknown"               -> Query is completely unrelated to cars.
+
+Transmission-specific routing guide:
+* "automatic cars" / "kaun si cars automatic hain" / "AMT wali cars"   → get_car_complete_data, fields: ["transmission"]
+* "Swift mein automatic hai kya" / "Baleno ka gear type"               → get_car_specs, model: <Model>, fields: ["transmission"]
+* "automatic cars under 8 lakh" / "AMT car 6 lakh mein"               → price_range, fields: ["transmission"], max_price: <value>
+* "Swift automatic vs manual" / "ZXI AMT vs ZXI MT"                    → compare_variants, fields: ["transmission"]
 
 ---
 CRITICAL STEP 3: FIELDS RULES
@@ -108,9 +138,12 @@ Populate "fields" ONLY when user asks for a specific attribute, not full info.
 - "safety"          -> airbags, NCAP, ABS, ESP
 - "fuel_tank"       -> fuel capacity, tank size
 - "reviews"         -> rating, reviews, user feedback
-- "mileage"         -> mileage, fuel efficiency, kmpl, kitna deti hai
-- "features"        -> sunroof, infotainment, cruise control, wireless charger
+- "mileage"         -> mileage, fuel efficiency, kmpl, kitna deti hai, average
+- "features"        -> sunroof, infotainment, cruise control, wireless charger, ADAS
 - "price_range_inr" -> price of the model overall
+- "transmission"    -> automatic, manual, AMT, CVT, AT, MT, auto gear, gear type,
+                       automatic gearbox, auto wali, kitna gear, haath wala gear,
+                       self-drive, automatik, aatamatic, ottometic
 
 ---
 GENERAL RULES:
@@ -123,7 +156,7 @@ GENERAL RULES:
     try:
         # Await the response
         response = await client.chat.completions.create(
-            model="meta/llama-3.1-70b-instruct", # 70B is much faster for JSON than 405B
+            model="meta/llama-3.1-70b-instruct",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query}
