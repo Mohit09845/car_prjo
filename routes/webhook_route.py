@@ -22,7 +22,8 @@ async def elevenlabs_webhook(request: Request):
 
     print("🔎 Query:", query)
 
-    intent_data = extract_intent(query)
+    # AWAIT the async intent parser so it doesn't block FastAPI
+    intent_data = await extract_intent(query)
     print("🧠 Intent Data:", intent_data)
 
     intent = intent_data.get("intent")
@@ -103,11 +104,12 @@ async def elevenlabs_webhook(request: Request):
             "variants": get_variants_by_price_range(min_p, max_p)
         }
     
+    # ── COMPLETE CAR DATA ─────────────────────────────────────────────────────
     elif intent == "get_car_complete_data":
         data = get_car_complete_data()
         return {
             "action": "car_complete_data",
-            "count": len(data),
+            "count": len(data) if data else 0,
             "variants": data
         }
 
