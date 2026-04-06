@@ -32,18 +32,48 @@ class IntentResponse(BaseModel):
     max_price: Optional[int] = Field(None, description="Maximum price in raw INR (10 lakh -> 1000000).")
 
     fields: Optional[List[Literal[
-        "colours",
-        "engine",
-        "dimensions",
-        "safety",
-        "fuel_tank",
-        "reviews",
-        "price_range_inr",
-        "variants",
-        "features",
-        "mileage",
-        "transmission"   # ← ADDED
+        # ── Appearance ──────────────────────────────────────────────────────
+        "colours",              # color, colour, shade, rang, color options
+
+        # ── Engine & Performance ─────────────────────────────────────────────
+        "engine",               # displacement, engine type, cc
+        "power",                # bhp, horsepower, kitna power, power output
+        "torque",               # nm, torque, pulling power
+        "mileage",              # mileage, fuel efficiency, kmpl, average, kitna deti hai
+
+        # ── Transmission ────────────────────────────────────────────────────
+        "transmission",         # automatic, manual, AMT, CVT, AT, MT, gear type
+
+        # ── Pricing ─────────────────────────────────────────────────────────
+        "price_range_inr",      # ex-showroom price range of model
+        "price_on_road",        # on-road price, total price, final price
+
+        # ── Fuel ────────────────────────────────────────────────────────────
+        "fuel_tank",            # fuel capacity, tank size, litres
+        "fuel_type",            # petrol, diesel, CNG, hybrid, electric, EV
+
+        # ── Dimensions & Space ──────────────────────────────────────────────
+        "dimensions",           # size, length, width, height
+        "boot_space",           # boot space, dicky, luggage space, trunk
+        "ground_clearance",     # ground clearance, height from road, off-road
+        "seating_capacity",     # seating, kitne log, seats, passengers, family size
+
+        # ── Safety ──────────────────────────────────────────────────────────
+        "safety",               # airbags, ABS, ESC, EBD, hill assist, ISOFIX
+        "airbags",              # airbags specifically, kitne airbags
+        "ncap",                 # NCAP rating, safety stars, crash test rating
+
+        # ── Features & Tech ─────────────────────────────────────────────────
+        "features",             # sunroof, infotainment, cruise control, wireless charger, ADAS
+        "key_features",         # top features, highlights, standout features
+
+        # ── Variants ────────────────────────────────────────────────────────
+        "variants",             # available variants, trim levels
+
+        # ── Reviews ─────────────────────────────────────────────────────────
+        "reviews",              # rating, user feedback, kitne log pasand karte hain
     ]]] = Field(None, description="Specific fields the user is asking about. Only populate when user asks for a specific attribute.")
+
 
 # Make this function ASYNC
 async def extract_intent(query: str) -> dict:
@@ -59,7 +89,7 @@ Your job is to read user queries, normalize any phonetic mispronunciations of ca
   "variants": ["List of variants if comparing"],
   "min_price": Minimum price in raw INR (e.g. 5 lakh -> 500000),
   "max_price": Maximum price in raw INR (e.g. 10 lakh -> 1000000),
-  "fields": ["Specific fields user is asking about e.g. colors, engine, mileage, safety, transmission"]
+  "fields": ["Specific fields user is asking about"]
 }
 
 ---
@@ -86,7 +116,7 @@ Because users speak via voice, STT transcripts often contain phonetic misspellin
 * e Vitara: e vitara, ev vitara, electric vitara, ivitara, e bitara
 * Alto Tour H1: Alto Tuar H1, Alto Tuur H1, Alto Tour H1, Alto Ture H1, Alto Toor H1
 
-Transmission term normalization (map all of these to their clean form in your reasoning):
+Transmission term normalization:
 * Automatic: automatik, aatamatic, ottometic, auto, aautomatic, automatic wali, auto wali
 * AMT: amt, a m t, auto manual, automated manual
 * CVT: cvt, c v t, continuously variable
@@ -96,11 +126,11 @@ Transmission term normalization (map all of these to their clean form in your re
 CRITICAL STEP 2: INTENT RULES
 - "get_all_cars"          -> User wants ONLY a simple list of car model names. No attributes.
                              EXAMPLE: "show me all cars", "kaun kaun si cars hain"
-- "get_car_complete_data" -> User asks about ANY attribute (mileage, price, power, specs, transmission) across ALL cars or ALL variants.
-                             EXAMPLES: "all cars mileage", "saari cars ki mileage", "avg mileage of all cars", "sabse zyada mileage wali car",
+- "get_car_complete_data" -> User asks about ANY attribute across ALL cars or ALL variants.
+                             EXAMPLES: "all cars mileage", "saari cars ki mileage", "sabse zyada mileage wali car",
                              "most powerful variant", "cheapest variant overall", "all cars price list",
-                             "automatic cars dikhao", "kaun si cars automatic hain", "sabhi cars mein automatic kaun si hai",
-                             "which cars have AMT", "AMT wali cars", "CVT cars list"
+                             "automatic cars dikhao", "kaun si cars automatic hain", "which cars have AMT",
+                             "kitni seating wali cars hain", "7 seater cars", "sabse zyada boot space"
                              STRICT RULE: If user asks about ANY attribute of ALL cars -> ALWAYS use "get_car_complete_data", NEVER "get_all_cars".
 - "get_car"               -> User wants full info about one specific model.
                              EXAMPLE: "tell me about Swift", "Baleno ki details do"
@@ -108,7 +138,8 @@ CRITICAL STEP 2: INTENT RULES
                              EXAMPLE: "Baleno ke colors kya hain", "what colors does Swift have"
                              Set fields: ["colours"]
 - "get_car_specs"         -> User asks about specs of one model.
-                             EXAMPLE: "Swift ki engine specs", "Baleno ka boot space", "Swift mein automatic hai kya", "Baleno ka gear type"
+                             EXAMPLE: "Swift ki engine specs", "Baleno ka boot space", "Swift mein kitni seating hai",
+                             "Brezza ka ground clearance", "Dzire ki on-road price", "Swift mein automatic hai kya"
                              Set fields accordingly.
 - "get_variants"          -> User wants all variants of one specific model listed.
                              EXAMPLE: "Swift ke saare variants", "show variants of Baleno"
@@ -118,43 +149,81 @@ CRITICAL STEP 2: INTENT RULES
                              EXAMPLE: "Swift vs Baleno", "compare Breja and Phronx"
 - "compare_variants"      -> User wants to compare 2 or more variants of the same model.
                              EXAMPLE: "Swift LXI vs VXI vs ZXI"
-- "price_range"           -> User filters cars/variants by budget, optionally with transmission type.
-                             EXAMPLE: "5 lakh se 8 lakh mein kaun si car", "cars under 10 lakh",
-                             "automatic cars under 8 lakh", "AMT car 6 lakh mein"
+- "price_range"           -> User filters cars/variants by budget.
+                             EXAMPLE: "5 lakh se 8 lakh mein kaun si car", "cars under 10 lakh"
 - "unknown"               -> Query is completely unrelated to cars.
 
 Transmission-specific routing guide:
-* "automatic cars" / "kaun si cars automatic hain" / "AMT wali cars"   → get_car_complete_data, fields: ["transmission"]
-* "Swift mein automatic hai kya" / "Baleno ka gear type"               → get_car_specs, model: <Model>, fields: ["transmission"]
-* "automatic cars under 8 lakh" / "AMT car 6 lakh mein"               → price_range, fields: ["transmission"], max_price: <value>
-* "Swift automatic vs manual" / "ZXI AMT vs ZXI MT"                    → compare_variants, fields: ["transmission"]
+* "automatic cars" / "AMT wali cars"                      → get_car_complete_data, fields: ["transmission"]
+* "Swift mein automatic hai kya" / "Baleno ka gear type"  → get_car_specs, model: <Model>, fields: ["transmission"]
+* "automatic cars under 8 lakh"                           → price_range, fields: ["transmission"], max_price: <value>
+* "Swift automatic vs manual"                             → compare_variants, fields: ["transmission"]
 
 ---
 CRITICAL STEP 3: FIELDS RULES
 Populate "fields" ONLY when user asks for a specific attribute, not full info.
-- "colours"         -> color, colour, shade, rang
-- "engine"          -> displacement, power, torque, engine type
-- "dimensions"      -> size, length, width, height, boot space, ground clearance
-- "safety"          -> airbags, NCAP, ABS, ESP
-- "fuel_tank"       -> fuel capacity, tank size
-- "reviews"         -> rating, reviews, user feedback
-- "mileage"         -> mileage, fuel efficiency, kmpl, kitna deti hai, average
-- "features"        -> sunroof, infotainment, cruise control, wireless charger, ADAS
-- "price_range_inr" -> price of the model overall
-- "transmission"    -> automatic, manual, AMT, CVT, AT, MT, auto gear, gear type,
-                       automatic gearbox, auto wali, kitna gear, haath wala gear,
-                       self-drive, automatik, aatamatic, ottometic
+Use EXACTLY these field names:
+
+APPEARANCE:
+- "colours"           -> color, colour, shade, rang, color options, kaunse rang
+
+ENGINE & PERFORMANCE:
+- "engine"            -> displacement, engine type, cc, engine specs
+- "power"             -> bhp, horsepower, kitna power, power output, powerful
+- "torque"            -> nm, torque, pulling power, torque output
+- "mileage"           -> mileage, fuel efficiency, kmpl, average, kitna deti hai, fuel economy
+
+TRANSMISSION:
+- "transmission"      -> automatic, manual, AMT, CVT, AT, MT, gear type, auto gear,
+                         automatic gearbox, auto wali, haath wala gear, self-drive
+
+PRICING:
+- "price_range_inr"   -> ex-showroom price, starting price, price of model
+- "price_on_road"     -> on-road price, total price, final price, road pe kitna padega
+
+FUEL:
+- "fuel_tank"         -> fuel capacity, tank size, kitne litre ka tank
+- "fuel_type"         -> petrol, diesel, CNG, hybrid, electric, EV, konsa fuel
+
+DIMENSIONS & SPACE:
+- "dimensions"        -> size, length, width, height, measurements
+- "boot_space"        -> boot space, dicky, luggage space, trunk, kitna samaan
+- "ground_clearance"  -> ground clearance, height from road, kitni uchi, off-road
+- "seating_capacity"  -> seating, kitne log, seats, passengers, family size, 5 seater, 7 seater
+
+SAFETY:
+- "safety"            -> safety features, ABS, ESC, EBD, hill assist, ISOFIX, overall safety
+- "airbags"           -> airbags, kitne airbags, airbag count
+- "ncap"              -> NCAP rating, safety stars, crash test, star rating
+
+FEATURES & TECH:
+- "features"          -> sunroof, infotainment, cruise control, wireless charger, ADAS, tech features
+- "key_features"      -> top features, highlights, kya kya milta hai, standout features
+
+VARIANTS:
+- "variants"          -> available variants, trim levels, kaun kaun se variants
+
+REVIEWS:
+- "reviews"           -> rating, user feedback, kitne log pasand karte hain, review, score
 
 ---
 GENERAL RULES:
-1. Normalize model names using the STT spelling list provided above. Always output the Official Name.
+1. Normalize model names using the STT spelling list above. Always output the Official Name.
 2. Convert lakh/thousand prices to raw INR integers (5 lakh -> 500000).
 3. Return ONLY valid JSON. No markdown, no explanation, no extra text.
 4. Omit keys that are not applicable (return null for them).
+5. When user asks about seating → fields: ["seating_capacity"]
+6. When user asks about boot space / dicky → fields: ["boot_space"]
+7. When user asks about ground clearance → fields: ["ground_clearance"]
+8. When user asks about on-road price → fields: ["price_on_road"]
+9. When user asks about safety rating / NCAP stars → fields: ["ncap"]
+10. When user asks about airbags count → fields: ["airbags"]
+11. When user asks about power/bhp → fields: ["power"]
+12. When user asks about torque → fields: ["torque"]
+13. When user asks about fuel type (petrol/CNG/electric) → fields: ["fuel_type"]
 """
 
     try:
-        # Await the response
         response = await client.chat.completions.create(
             model="meta/llama-3.1-70b-instruct",
             messages=[

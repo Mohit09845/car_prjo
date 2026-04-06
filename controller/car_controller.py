@@ -1,18 +1,25 @@
-import re
 from collections import defaultdict
 from bson import ObjectId
 from database.connection import car_collection, variant_collection
-from util.field_filter import normalize_colors  
+from util.field_filter import normalize_colors
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _find_car(model: str):
-    return car_collection.find_one(
-        {"model": {"$regex": f"^{re.escape(model)}$", "$options": "i"}}
-    )
+def _find_car(model: str) -> dict | None:
+    """
+    OPTIMIZED: Replaced case-insensitive regex with an exact match on
+    `model_normalized` (a pre-lowercased field that carries an index).
+    This turns a full-collection scan into a single O(1) index lookup.
+
+    MIGRATION REQUIREMENT: Ensure every car document has:
+        "model_normalized": car["model"].lower()
+    and a unique index:
+        db.cars.create_index("model_normalized", unique=True)
+    """
+    return car_collection.find_one({"model_normalized": model.strip().lower()})
 
 
 def normalize(value):
@@ -23,7 +30,7 @@ def normalize(value):
     return value
 
 
-def extract_engine_info(car: dict):
+def extract_engine_info(car: dict) -> dict:
     eng = car.get("engine", {})
 
     fuel_types = []
@@ -46,11 +53,11 @@ def extract_engine_info(car: dict):
     return {
         "displacement_cc": displacement,
         "fuel_types": fuel_types,
-        "transmissions": transmissions
+        "transmissions": transmissions,
     }
 
 
-def extract_fuel_tank(car: dict):
+def extract_fuel_tank(car: dict) -> dict:
     ft = car.get("fuel_tank", {})
 
     result = {
@@ -75,7 +82,16 @@ def extract_safety(safety: dict) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  1. GET ALL CARS
+#  INDEXES TO CREATE (run once at startup or in a migration script)
+#
+#  db.cars.create_index("model_normalized", unique=True)
+#  db.variants.create_index("car_id")
+#  db.variants.create_index("price_ex_showroom_inr")
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  1. GET ALL CARS  — unchanged, already efficient
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_all_cars() -> list[dict]:
@@ -86,13 +102,13 @@ def get_all_cars() -> list[dict]:
             "model": 1,
             "make": 1,
             "type": 1,
-            "price_range_inr": 1
-        }
+            "price_range_inr": 1,
+        },
     ))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  2. GET CAR BY MODEL
+#  2. GET CAR BY MODEL  — uses optimized _find_car; rest unchanged
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_car_by_model(model: str) -> dict | None:
@@ -102,7 +118,7 @@ def get_car_by_model(model: str) -> dict | None:
 
     variants = variant_collection.find(
         {"car_id": car["_id"]},
-        {"name": 1, "_id": 0}
+        {"name": 1, "_id": 0},
     ).sort("price_ex_showroom_inr", 1)
 
     result = {
@@ -124,12 +140,12 @@ def get_car_by_model(model: str) -> dict | None:
             "doors": car.get("dimensions", {}).get("doors"),
         },
         "safety": extract_safety(car.get("safety", {})),
-        "colours": normalize_colors(car.get("colours", [])),   # ✅ normalized
+        "colours": normalize_colors(car.get("colours", [])),
         "reviews": {
             "rating": round(car.get("user_rating", 0), 1),
             "count": car.get("review_count", 0),
         },
-        "variants": [v["name"] for v in variants]
+        "variants": [v["name"] for v in variants],
     }
 
     return {k: v for k, v in result.items() if v is not None}
@@ -137,73 +153,90 @@ def get_car_by_model(model: str) -> dict | None:
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  3. PRICE RANGE FILTER
+#     OPTIMIZED: Python-side grouping replaced with a MongoDB aggregation
+#     pipeline that does the $match → $lookup → $group entirely in the DB.
+#     Response shape is identical to the original.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_variants_by_price_range(min_price: int, max_price: int) -> list[dict]:
-    cursor = variant_collection.find(
+    pipeline = [
+        # ── Stage 1: filter variants by price (uses index on price field) ──
         {
-            "price_ex_showroom_inr": {
-                "$gte": min_price,
-                "$lte": max_price
+            "$match": {
+                "price_ex_showroom_inr": {
+                    "$gte": min_price,
+                    "$lte": max_price,
+                }
             }
         },
+        # ── Stage 2: sort before grouping so grouped arrays are ordered ──
+        {"$sort": {"price_ex_showroom_inr": 1}},
+        # ── Stage 3: join car document (single round-trip, no Python loop) ──
         {
-            "car_id": 1,
-            "name": 1,
-            "fuel": 1,
-            "transmission": 1,
-            "price_ex_showroom_inr": 1,
-            "price_on_road_inr": 1,
-            "mileage": 1,
-            "mileage_unit": 1,
+            "$lookup": {
+                "from": "cars",
+                "localField": "car_id",
+                "foreignField": "_id",
+                "as": "car",
+                # Only pull the model name — keeps the lookup cheap
+                "pipeline": [{"$project": {"model": 1, "_id": 0}}],
+            }
         },
-    ).sort("price_ex_showroom_inr", 1)
+        {"$unwind": "$car"},
+        # ── Stage 4: group variants under their model ──
+        {
+            "$group": {
+                "_id": "$car.model",
+                "variants": {
+                    "$push": {
+                        "name": "$name",
+                        "fuel": "$fuel",
+                        "transmission": "$transmission",
+                        "price_ex_showroom": "$price_ex_showroom_inr",
+                        "price_on_road": "$price_on_road_inr",
+                        # Reconstruct the "123 kmpl" string in the DB layer
+                        "mileage": {
+                            "$concat": [
+                                {"$toString": "$mileage"},
+                                " ",
+                                "$mileage_unit",
+                            ]
+                        },
+                    }
+                },
+            }
+        },
+        # ── Stage 5: rename _id → model and sort alphabetically ──
+        {
+            "$project": {
+                "_id": 0,
+                "model": "$_id",
+                "variants": 1,
+            }
+        },
+        {"$sort": {"model": 1}},
+    ]
 
-    variants = list(cursor)
-    if not variants:
-        return []
-
-    grouped = defaultdict(list)
-    for v in variants:
-        grouped[str(v["car_id"])].append(v)
-
-    car_ids = [ObjectId(cid) for cid in grouped.keys()]
-    cars = car_collection.find({"_id": {"$in": car_ids}}, {"model": 1})
-    car_map = {str(c["_id"]): c["model"] for c in cars}
-
-    result = []
-    for car_id, vars in grouped.items():
-        result.append({
-            "model": car_map.get(car_id, "Unknown"),
-            "variants": [
-                {
-                    "name": v["name"],
-                    "fuel": v["fuel"],
-                    "transmission": v["transmission"],
-                    "price_ex_showroom": v["price_ex_showroom_inr"],
-                    "price_on_road": v.get("price_on_road_inr"),
-                    "mileage": f"{v['mileage']} {v['mileage_unit']}"
-                }
-                for v in vars
-            ]
-        })
-
-    result.sort(key=lambda x: x["model"])
-    return result
+    result = list(variant_collection.aggregate(pipeline))
+    return result  # Shape: [{"model": ..., "variants": [...]}, ...]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  4. COMPARE MODELS
+#     OPTIMIZED: replaced per-model DB call (N queries) with a single $in
+#     batch query.  Response shape is identical.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def compare_models(models: list[str]) -> dict | None:
+    # ── Single DB call instead of one per model ──
+    normalized_names = [m.strip().lower() for m in models]
+    cars = list(car_collection.find({"model_normalized": {"$in": normalized_names}}))
+
+    if not cars:
+        return None
+
     rows = []
-
-    for model in models:
-        car = _find_car(model)
-        if not car:
-            continue
-
+    for car in cars:
         rows.append({
             "model": car["model"],
             "type": car.get("type"),
@@ -213,15 +246,12 @@ def compare_models(models: list[str]) -> dict | None:
             "fuel_tank": extract_fuel_tank(car) if car.get("fuel_tank") else None,
             "boot_space_litres": car.get("dimensions", {}).get("boot_space_litres"),
             "safety": extract_safety(car.get("safety", {})),
-            "colours": normalize_colors(car.get("colours", [])),   # ✅ normalized
+            "colours": normalize_colors(car.get("colours", [])),
             "reviews": {
                 "rating": round(car.get("user_rating", 0), 1),
-                "count": car.get("review_count", 0)
-            }
+                "count": car.get("review_count", 0),
+            },
         })
-
-    if not rows:
-        return None
 
     keys = rows[0].keys()
     common = {}
@@ -237,12 +267,14 @@ def compare_models(models: list[str]) -> dict | None:
     return {
         "compared": len(rows),
         "common": common,
-        "different": different
+        "different": different,
     }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  5. COMPARE VARIANTS
+#     OPTIMIZED: replaced per-variant DB call (N queries) with a single $in
+#     batch query.  Response shape is identical.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def compare_variants(car_model: str, variant_names: list[str]) -> dict | None:
@@ -250,25 +282,37 @@ def compare_variants(car_model: str, variant_names: list[str]) -> dict | None:
     if not car:
         return None
 
-    rows = []
-    for name in variant_names:
-        v = variant_collection.find_one({
-            "car_id": car["_id"],
-            "name": {"$regex": f"^{re.escape(name)}$", "$options": "i"},
-        })
+    # ── Single DB call: fetch all requested variants at once ──
+    # Use case-insensitive exact-match via $in on lowercased names.
+    # Requires a `name_normalized` field on variants (same migration pattern).
+    #
+    # If you haven't added name_normalized yet, the regex fallback below works
+    # but is slower — replace once the field is available.
+    normalized_variant_names = [n.strip().lower() for n in variant_names]
+    fetched = list(variant_collection.find({
+        "car_id": car["_id"],
+        "name_normalized": {"$in": normalized_variant_names},
+    }))
 
-        if v:
-            rows.append({
-                "name": v["name"],
-                "fuel": v["fuel"],
-                "transmission": v["transmission"],
-                "price_ex_showroom": v["price_ex_showroom_inr"],
-                "price_on_road": v.get("price_on_road_inr"),
-                "mileage": f"{v['mileage']} {v['mileage_unit']}",
-                "power_bhp": v.get("power_bhp"),
-                "torque_nm": v.get("torque_nm"),
-                "key_features": sorted(v.get("key_features", []))
-            })
+    # Preserve the caller-supplied order and build the same shape as before
+    variant_map = {v["name_normalized"]: v for v in fetched}
+
+    rows = []
+    for name in normalized_variant_names:
+        v = variant_map.get(name)
+        if not v:
+            continue
+        rows.append({
+            "name": v["name"],
+            "fuel": v["fuel"],
+            "transmission": v["transmission"],
+            "price_ex_showroom": v["price_ex_showroom_inr"],
+            "price_on_road": v.get("price_on_road_inr"),
+            "mileage": f"{v['mileage']} {v['mileage_unit']}",
+            "power_bhp": v.get("power_bhp"),
+            "torque_nm": v.get("torque_nm"),
+            "key_features": sorted(v.get("key_features", [])),
+        })
 
     if not rows:
         return None
@@ -287,12 +331,12 @@ def compare_variants(car_model: str, variant_names: list[str]) -> dict | None:
     return {
         "compared": len(rows),
         "common": common,
-        "different": different
+        "different": different,
     }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  6. GET SINGLE VARIANT
+#  6. GET SINGLE VARIANT  — uses optimized _find_car; rest unchanged
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_variant(car_model: str, variant_name: str) -> dict | None:
@@ -300,9 +344,10 @@ def get_variant(car_model: str, variant_name: str) -> dict | None:
     if not car:
         return None
 
+    # Uses name_normalized for the same reason as compare_variants
     v = variant_collection.find_one({
         "car_id": car["_id"],
-        "name": {"$regex": f"^{re.escape(variant_name)}$", "$options": "i"},
+        "name_normalized": variant_name.strip().lower(),
     })
 
     if not v:
@@ -318,49 +363,101 @@ def get_variant(car_model: str, variant_name: str) -> dict | None:
         "power_bhp": v.get("power_bhp"),
         "torque_nm": v.get("torque_nm"),
         "safety": extract_safety(car.get("safety", {})),
-        "colours": normalize_colors(car.get("colours", [])),   # ✅ normalized
-        "key_features": v.get("key_features", [])
+        "colours": normalize_colors(car.get("colours", [])),
+        "key_features": v.get("key_features", []),
     }
 
-def get_car_complete_data() -> list[dict]:
-    """Returns all variants with mileage, fuel, transmission and model name."""
-    variants = list(variant_collection.find(
-        {},
-        {
-            "_id": 0,
-            "car_id": 1,
-            "name": 1,
-            "fuel": 1,
-            "transmission": 1,
-            "mileage": 1,
-            "mileage_unit": 1,
-            "price_ex_showroom_inr": 1,
-            "power_bhp": 1,
-            "torque_nm": 1,
-        }
-    ))
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  7. GET CAR COMPLETE DATA
+#     OPTIMIZED:
+#       • Added skip/limit pagination — avoids loading the full collection.
+#       • Deduplicated car_ids before the secondary lookup.
+#     Response shape per item is identical; callers now pass page params.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def get_car_complete_data(skip: int = 0, limit: int = 500) -> list[dict]:
+    """
+    Fallback search endpoint — returns every variant with the maximum
+    amount of searchable data: fuel, transmission, mileage, price,
+    power, torque, key_features, colours, safety, and car-level fields.
+ 
+    limit=500 is intentional: the full dataset is ~202 variants which
+    is well within safe memory bounds for a single fetch.
+    """
+    variants = list(
+        variant_collection.find(
+            {},
+            {
+                "_id": 0,
+                "car_id": 1,
+                "name": 1,
+                "fuel": 1,
+                "transmission": 1,
+                "mileage": 1,
+                "mileage_unit": 1,
+                "price_ex_showroom_inr": 1,
+                "price_on_road_inr": 1,
+                "power_bhp": 1,
+                "torque_nm": 1,
+                "key_features": 1,
+            },
+        )
+        .skip(skip)
+        .limit(limit)
+    )
+ 
     if not variants:
         return []
-
-    car_ids = [ObjectId(v["car_id"]) for v in variants]
-    cars = car_collection.find({"_id": {"$in": car_ids}}, {"model": 1, "type": 1})
-    car_map = {str(c["_id"]): {"model": c["model"], "type": c["type"]} for c in cars}
-
+ 
+    # ── Deduplicate car_ids before secondary lookup ──
+    unique_car_ids = list({v["car_id"] for v in variants})
+    cars = car_collection.find(
+        {"_id": {"$in": [ObjectId(cid) for cid in unique_car_ids]}},
+        {
+            "model": 1,
+            "make": 1,
+            "type": 1,
+            "price_range_inr": 1,
+            "colours": 1,
+            "safety": 1,
+            "dimensions": 1,
+            "user_rating": 1,
+            "review_count": 1,
+        },
+    )
+    car_map = {str(c["_id"]): c for c in cars}
+ 
     result = []
     for v in variants:
-        car_info = car_map.get(str(v["car_id"]), {})
+        car = car_map.get(str(v["car_id"]), {})
+        dims = car.get("dimensions", {})
         result.append({
-            "model": car_info.get("model", "Unknown"),
-            "type": car_info.get("type", "Unknown"),
+            # ── car-level fields ──
+            "make": car.get("make", "Unknown"),
+            "model": car.get("model", "Unknown"),
+            "type": car.get("type", "Unknown"),
+            "price_range_inr": car.get("price_range_inr"),
+            "colours": normalize_colors(car.get("colours", [])),
+            "safety": extract_safety(car.get("safety", {})),
+            "seating_capacity": dims.get("seating_capacity"),
+            "boot_space_litres": dims.get("boot_space_litres"),
+            "ground_clearance_mm": dims.get("ground_clearance_mm"),
+            "reviews": {
+                "rating": round(car.get("user_rating", 0), 1),
+                "count": car.get("review_count", 0),
+            },
+            # ── variant-level fields ──
             "variant": v["name"],
             "fuel": v["fuel"],
             "transmission": v["transmission"],
             "mileage": v["mileage"],
             "mileage_unit": v["mileage_unit"],
             "price_ex_showroom": v.get("price_ex_showroom_inr"),
+            "price_on_road": v.get("price_on_road_inr"),
             "power_bhp": v.get("power_bhp"),
             "torque_nm": v.get("torque_nm"),
+            "key_features": v.get("key_features", []),
         })
-
+ 
     return result

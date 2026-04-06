@@ -3916,20 +3916,25 @@ def insert_cars():
         except ValidationError as e:
             print(f"❌ Car validation failed: {raw.get('make')} {raw.get('model')}\n{e}")
             continue
+ 
         doc = car.model_dump(by_alias=True)
+ 
+        # ── Write the normalized field at insert time ──
+        doc["model_normalized"] = doc["model"].strip().lower()
+ 
         exists = col.find_one({"make": doc["make"], "model": doc["model"]})
         if not exists:
             result = col.insert_one(doc)
             print(f"✅ Car inserted : {doc['make']} {doc['model']} → {result.inserted_id}")
         else:
             print(f"⚠️  Skipped      : {doc['make']} {doc['model']} (already exists)")
-
-
+ 
+ 
 def insert_variants():
     db = get_db()
     cars_col = db["cars"]
     variants_col = db["variants"]
-
+ 
     for raw in VARIANTS:
         try:
             v = VariantSeed.model_validate(raw)
@@ -3939,23 +3944,24 @@ def insert_variants():
                 f"{raw.get('car_model')} {raw.get('name')}\n{e}"
             )
             continue
-
+ 
         car = cars_col.find_one({"model": v.car_model})
         if not car:
             print(f"❌ Car not found : {v.car_model} — skipping variant '{v.name}'")
             continue
-
+ 
         exists = variants_col.find_one({"car_id": car["_id"], "name": v.name})
         if not exists:
             payload = v.model_dump(exclude={"car_model"}, exclude_none=True, by_alias=True)
             payload["car_id"] = car["_id"]
+ 
+            # ── Write the normalized field at insert time ──
+            payload["name_normalized"] = payload["name"].strip().lower()
+ 
             result = variants_col.insert_one(payload)
             print(f"✅ Variant inserted : {v.car_model} {v.name} → {result.inserted_id}")
         else:
             print(f"⚠️  Skipped         : {v.car_model} {v.name} (already exists)")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     insert_cars()

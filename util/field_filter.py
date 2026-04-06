@@ -51,14 +51,16 @@ COLOR_MAP = {
     "midnight black": "Black",
     "solid black": "Black",
     "black": "Black",
-    "pearl midnight black": "Black",       
+    "pearl midnight black": "Black",    
+    "novel orange": "Orange",    
 
     # Blues
     "exuberant blue": "Blue",
     "metallic blue": "Blue",
     "cerulean blue": "Blue",
     "nexa blue": "Blue",
-    "blue": "Blue",                        
+    "blue": "Blue",
+    "luster blue": "Blue",                    
 
     # Dual Tones
     "dual tone white + black": "White with Black roof",
