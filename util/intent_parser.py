@@ -1,7 +1,11 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal
 from openai import AsyncOpenAI
+from dotenv import load_dotenv
 import os
+
+# Ensure .env is loaded before reading env vars (required in Docker containers)
+load_dotenv()
 
 # Use the ASYNC client to prevent blocking the FastAPI event loop
 client = AsyncOpenAI(

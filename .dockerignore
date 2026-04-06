@@ -1,0 +1,38 @@
+# ── Python runtime artifacts ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.so
+
+# ── Virtual environment ───────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Environment / secrets — NEVER bake into the image ────────────────────────
+.env
+.env.*
+*.env
+
+# ── IDE / OS generated ────────────────────────────────────────────────────────
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ── Git ───────────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── Docker build files themselves ────────────────────────────────────────────
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# ── Development / testing ────────────────────────────────────────────────────
+*.md
+*.log
+tests/
