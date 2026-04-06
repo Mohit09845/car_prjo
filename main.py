@@ -24,6 +24,12 @@ async def lifespan(app: FastAPI):
         )
 
     print("✅ Environment variables validated.")
+
+    # Safely connect and ensure DB indexes ONLY after env vars are fully validated
+    from database.connection import ensure_indexes
+    from fastapi.concurrency import run_in_threadpool
+    await run_in_threadpool(ensure_indexes)
+    
     print("🚀 Car API is starting up…")
 
     yield  # ← application runs here

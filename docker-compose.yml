@@ -27,6 +27,13 @@ services:
     env_file:
       - .env
 
+    # ── DNS Configuration ────────────────────────────────────────────────────
+    # Forces Docker to bypass its internal IPv6 resolver which often times-out
+    # and delays queries out to MongoDB Atlas and NVIDIA NIM.
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+
     # ── Health-check (mirrors the Dockerfile HEALTHCHECK) ────────────────────
     healthcheck:
       test: ["CMD", "python", "-c",

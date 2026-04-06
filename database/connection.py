@@ -6,7 +6,7 @@ load_dotenv()
 
 MONGO_URL = os.getenv("MONGO_URL")
 
-client = MongoClient(MONGO_URL)
+client = MongoClient(MONGO_URL, connect=False)
 db = client["car_db"]
 
 car_collection = db["cars"]
@@ -62,5 +62,4 @@ def ensure_indexes():
     print("OK: All indexes ensured.")
 
 
-# Create indexes once on first import (idempotent — safe to run repeatedly)
-ensure_indexes()
+# removed global ensure_indexes() call; it is now safely executed in the FastAPI lifespan.

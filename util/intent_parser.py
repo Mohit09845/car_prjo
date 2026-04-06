@@ -1,11 +1,16 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal
+from collections import OrderedDict
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 import os
 
 # Ensure .env is loaded before reading env vars (required in Docker containers)
 load_dotenv()
+
+# LRU Cache for intent parsing to avoid redundant LLM operations
+_INTENT_CACHE = OrderedDict()
+MAX_CACHE_SIZE = 1000
 
 # Use the ASYNC client to prevent blocking the FastAPI event loop
 client = AsyncOpenAI(
@@ -81,6 +86,12 @@ class IntentResponse(BaseModel):
 
 # Make this function ASYNC
 async def extract_intent(query: str) -> dict:
+    # ── Check Cache First ──
+    if query in _INTENT_CACHE:
+        _INTENT_CACHE.move_to_end(query)  # Mark as recently used
+        print(f"⚡ Cache hit for query: '{query}'")
+        return _INTENT_CACHE[query]
+
     system_prompt = """
 You are a Maruti Suzuki car dealership API assistant intent parser.
 Your job is to read user queries, normalize any phonetic mispronunciations of car models, and map the query strictly to the following JSON format.
@@ -135,7 +146,8 @@ CRITICAL STEP 2: INTENT RULES
                              "most powerful variant", "cheapest variant overall", "all cars price list",
                              "automatic cars dikhao", "kaun si cars automatic hain", "which cars have AMT",
                              "kitni seating wali cars hain", "7 seater cars", "sabse zyada boot space"
-                             STRICT RULE: If user asks about ANY attribute of ALL cars -> ALWAYS use "get_car_complete_data", NEVER "get_all_cars".
+                             STRICT RULE: If user asks about an attribute across the ENTIRE system -> ALWAYS use "get_car_complete_data".
+                             HOWEVER: If they ask for "all cars of a SPECIFIC model" (e.g., "all manual cars of brezza", "brezza ki sabhi automatic cars"), USE "get_variants", NOT "get_car_complete_data".
 - "get_car"               -> User wants full info about one specific model.
                              EXAMPLE: "tell me about Swift", "Baleno ki details do"
 - "get_car_colors"        -> User asks specifically about colors of one model.
@@ -145,8 +157,8 @@ CRITICAL STEP 2: INTENT RULES
                              EXAMPLE: "Swift ki engine specs", "Baleno ka boot space", "Swift mein kitni seating hai",
                              "Brezza ka ground clearance", "Dzire ki on-road price", "Swift mein automatic hai kya"
                              Set fields accordingly.
-- "get_variants"          -> User wants all variants of one specific model listed.
-                             EXAMPLE: "Swift ke saare variants", "show variants of Baleno"
+- "get_variants"          -> User wants all variants of one specific model listed, or filtered variants of a specific model.
+                             EXAMPLE: "Swift ke saare variants", "show variants of Baleno", "Brezza manual variants", "all automatic cars of Swift"
 - "get_variant_detail"    -> User asks about one specific variant of a model.
                              EXAMPLE: "Swift VXI ki details", "Baleno Alpha ka price"
 - "compare_models"        -> User wants to compare 2 or more car models.
@@ -251,7 +263,14 @@ GENERAL RULES:
         content = content.strip()
 
         parsed_data = IntentResponse.model_validate_json(content)
-        return parsed_data.model_dump(exclude_none=True)
+        result = parsed_data.model_dump(exclude_none=True)
+        
+        # ── Save to Cache ──
+        _INTENT_CACHE[query] = result
+        if len(_INTENT_CACHE) > MAX_CACHE_SIZE:
+            _INTENT_CACHE.popitem(last=False)  # Remove oldest entry
+            
+        return result
 
     except Exception as e:
         print(f"Intent parsing error: {e}")
